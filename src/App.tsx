@@ -1,11 +1,26 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { MAX_SLIPPAGE, probe, safeSlippage } from "./sandwich";
-import { EXAMPLES, FIELDS, type FieldKey, type Values, parseField, readHash, writeHash } from "./fields";
+import {
+  EXAMPLES,
+  FIELDS,
+  type FieldKey,
+  type Values,
+  parseField,
+  readLegacyHash,
+  readQuery,
+  writeQuery,
+} from "./fields";
 import { formatAmount, formatPercent } from "./format";
 
 export function App() {
-  const [values, setValues] = useState<Values>(() => readHash(window.location.hash) ?? EXAMPLES[1].values);
+  const [values, setValues] = useState<Values>(
+    () => readQuery(window.location.search) ?? readLegacyHash(window.location.hash) ?? EXAMPLES[1].values,
+  );
   const [copied, setCopied] = useState(false);
+  const verdictRef = useRef<HTMLDivElement>(null);
+  // The query string this page last wrote or loaded, so history moves to another scenario can be told
+  // apart from in-page anchor jumps that leave the query alone.
+  const lastSearch = useRef(window.location.search);
 
   const parsed = useMemo(() => {
     const out = {} as Record<FieldKey, number>;
@@ -34,9 +49,37 @@ export function App() {
     return { result: probe(input), safe: safeSlippage(input), slippage: input.slippage };
   }, [parsed, valid]);
 
+  // Scenario in the query, section links in the fragment. An older #a=… scenario link is moved to the query.
   useEffect(() => {
-    if (valid) window.history.replaceState(null, "", writeHash(values));
-  }, [values, valid]);
+    if (!valid) return;
+    const query = writeQuery(parsed.numbers);
+    const legacy = readLegacyHash(window.location.hash) !== null;
+    lastSearch.current = query;
+    if (window.location.search === query && !legacy) return;
+    const hash = legacy ? "" : window.location.hash;
+    window.history.replaceState(window.history.state, "", window.location.pathname + query + hash);
+  }, [parsed, valid]);
+
+  // Same-page navigation (back/forward, or following a scenario link in an open tab) restores that scenario.
+  useEffect(() => {
+    const sync = () => {
+      const legacy = readLegacyHash(window.location.hash);
+      if (legacy) {
+        setValues(legacy);
+        return;
+      }
+      if (window.location.search === lastSearch.current) return;
+      const fromQuery = readQuery(window.location.search);
+      lastSearch.current = window.location.search;
+      if (fromQuery) setValues(fromQuery);
+    };
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
+    };
+  }, []);
 
   useEffect(() => {
     if (!copied) return;
@@ -46,9 +89,8 @@ export function App() {
 
   const update = (key: FieldKey, value: string) => setValues((prev) => ({ ...prev, [key]: value }));
 
-  const shareUrl = window.location.href.split("#")[0] + writeHash(values);
-
   const copyLink = async () => {
+    const shareUrl = window.location.href.split(/[?#]/)[0] + writeQuery(parsed.numbers);
     try {
       await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
@@ -99,6 +141,7 @@ export function App() {
                   name={field.key}
                   label={field.label}
                   unit={field.unit}
+                  spokenUnit={field.spokenUnit}
                   hint={field.hint}
                   value={values[field.key]}
                   error={parsed.errors[field.key]}
@@ -116,7 +159,7 @@ export function App() {
             <h2 id="results-title" className="visually-hidden">
               Result
             </h2>
-            <div role="status" aria-live="polite" className="verdict-region">
+            <div role="status" aria-live="polite" className="verdict-region" tabIndex={-1} ref={verdictRef}>
               {report === null ? (
                 <p className="verdict verdict-idle">Fix the highlighted field to see the result.</p>
               ) : report.result.exposed ? (
@@ -132,7 +175,7 @@ export function App() {
               ) : (
                 <div className="verdict verdict-safe">
                   <p className="verdict-title">
-                    <CheckIcon /> Safe: no sandwich pays after gas
+                    <CheckIcon /> Safe: no profitable sandwich in this model
                   </p>
                   <p className="verdict-body">You get {formatAmount(report.result.expectedOut)} B.</p>
                 </div>
@@ -147,7 +190,7 @@ export function App() {
                       <>No sandwich pays at any slippage up to {formatPercent(MAX_SLIPPAGE)}.</>
                     ) : (
                       <>
-                        Highest safe slippage: <strong className="num">{safeLabel}</strong>
+                        Suggested slippage (rounded down): <strong className="num">{safeLabel}</strong>
                       </>
                     )}
                   </p>
@@ -155,7 +198,11 @@ export function App() {
                     <button
                       type="button"
                       className="button-primary"
-                      onClick={() => update("slippage", String(+(report.safe * 100).toFixed(2)))}
+                      onClick={() => {
+                        update("slippage", String(+(report.safe * 100).toFixed(2)));
+                        // The button disappears once applied; keep keyboard focus on the updated result.
+                        verdictRef.current?.focus();
+                      }}
                     >
                       Use {safeLabel} slippage
                     </button>
@@ -193,7 +240,7 @@ export function App() {
           <code className="formula">out = in × (1 − fee) × B ÷ (A + in × (1 − fee))</code>
           <p>
             Your slippage caps the attack: the price can only move until you get the lowest output you accept. The
-            probe tries every front-run size up to that cap and subtracts gas.
+            probe searches for the most profitable front-run size within that cap and subtracts gas.
           </p>
           <p>
             It assumes one attacker, no other pending trades and a public mempool. Nothing is read from a chain; the
@@ -213,18 +260,27 @@ interface FieldProps {
   name: string;
   label: string;
   unit: string;
+  spokenUnit?: string;
   hint?: string;
   value: string;
   error?: string;
   onChange: (value: string) => void;
 }
 
-function Field({ name, label, unit, hint, value, error, onChange }: FieldProps) {
+function Field({ name, label, unit, spokenUnit, hint, value, error, onChange }: FieldProps) {
   const id = useId();
   const described = [hint ? `${id}-hint` : "", error ? `${id}-error` : ""].filter(Boolean).join(" ");
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id}>
+        {label}
+        {spokenUnit && (
+          <>
+            {" "}
+            <span className="visually-hidden">({spokenUnit})</span>
+          </>
+        )}
+      </label>
       <div className={`input-wrap${error ? " has-error" : ""}`}>
         <input
           id={id}

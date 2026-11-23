@@ -225,6 +225,11 @@ h1 {
   padding: var(--space-4);
 }
 
+/* Grid items default to min-width: auto; let the panels shrink to the track. */
+.workspace > .panel {
+  min-width: 0;
+}
+
 @media (min-width: 40rem) {
   .panel {
     padding: var(--space-6);
@@ -443,6 +448,22 @@ button:active {
 
 .verdict-body {
   font-variant-numeric: tabular-nums;
+}
+
+/* Long amounts (e.g. a 1e32 reserve) wrap inside the number instead of widening the panel. */
+.verdict-title,
+.verdict-body,
+.safe-row p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.verdict-region {
+  border-radius: var(--radius-control);
+}
+
+.verdict-region:focus-visible {
+  outline-offset: 4px;
 }
 
 .safe-row {

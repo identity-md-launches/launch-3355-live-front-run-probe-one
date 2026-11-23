@@ -78,7 +78,11 @@ letter-spacing; there are no uppercase labels.
 - Page width: header, `main` and footer share one container, `max-width: var(--page-max)` (72rem) with
   `padding-inline: var(--gutter)`. `--gutter` is 16px, 24px from 40rem.
 - `.workspace`: one column; from 56rem two columns `minmax(0, 1.15fr) minmax(0, 1fr)` with 24px gap,
-  inputs left, results right, top-aligned.
+  inputs left, results right, top-aligned. `.workspace > .panel` sets `min-width: 0` so a panel never
+  widens its grid track.
+- Long numbers wrap: `.verdict-title`, `.verdict-body`, `.safe-row p` and `.figure dd` use
+  `overflow-wrap: anywhere` (with `min-width: 0`), so an amount such as a 1e32 reserve stays fully
+  visible across lines inside the panel instead of pushing it past the viewport.
 - `.field-grid` and `.figures`: always two equal columns (`minmax(0, 1fr)`), so labels wrap rather than
   overflow at 320px.
 - `.panel` padding: 16px, 24px from 40rem.
@@ -86,7 +90,8 @@ letter-spacing; there are no uppercase labels.
   direction-dependent spacing.
 
 Observed in Chromium (Playwright) at 320, 390 and 1440 wide: no horizontal scroll; at 390x844 the inputs
-and the verdict are both on the first screen (verdict top at 676px; at 320 wide it is at 787px).
+and the verdict are both on the first screen (verdict top at 676px; at 320 wide it is at 787px). With
+the Mid pool and a 1e32 reserve of B, `scrollWidth` stays 320 at 320 wide and both panels end at 304px.
 
 ## Elevation & Depth
 
@@ -114,15 +119,22 @@ components.
 - **Chip** (`.chip`): secondary action that loads example values. 40px tall, pill shape.
 - **Field** (`Field` in `src/App.tsx`, `.field`, `.input-wrap`, `.unit`, `.field-hint`, `.field-error`):
   visible `<label for>`, text input with `inputMode="decimal"`, unit suffix inside the box (hidden from
-  assistive tech; the label names the quantity). Error state sets `aria-invalid`, a red border, and
+  assistive tech). Where the label does not already name the unit, a visually hidden `(token A)` or
+  `(percent)` is added to the label, so the accessible names are "You sell (token A)", "Slippage
+  tolerance (percent)", "Pool fee (percent)" and "Attacker gas cost (token A)". Values accept a decimal
+  point or a decimal comma and grouped thousands (`parseNumber` in `src/fields.ts`); an ambiguous
+  "1,234" shows "Unclear: write 1234 or 1.234". Error state sets `aria-invalid`, a red border, and
   replaces the hint with the error text linked by `aria-describedby`. Focus ring is drawn on the wrapper
   via `:focus-within`.
-- **Primary button** (`.button-primary`): the single filled action per view ("Use 0.37% slippage"). 44px
-  tall. Only rendered when it would change something.
+- **Primary button** (`.button-primary`): the single filled action per view ("Use 0.37% slippage"),
+  beside "Suggested slippage (rounded down): 0.37%". 44px tall. Only rendered when it would change
+  something. Activating it moves focus to the verdict.
 - **Secondary button** (`.button-secondary`): outlined; "Copy link to this result", which swaps its label
   to "Link copied" for 2 seconds.
 - **Verdict** (`.verdict-region` with `role="status"`): a stable polite live region whose text updates
-  on every change. Exposed and safe titles pair colour with an icon and the words "Exposed" or "Safe".
+  on every change. Exposed and safe titles pair colour with an icon and the words "Exposed" or "Safe"
+  ("Safe: no profitable sandwich in this model"). It has `tabIndex={-1}` so focus can land on it after
+  the suggestion is applied; its `:focus-visible` ring is offset 4px with the control radius.
 - **Figures** (`.figures`, `Figure`): a `<dl>` of term (caption, secondary) over value (body, 600,
   tabular).
 - **Formula** (`.formula`): monospace code block for one equation.
